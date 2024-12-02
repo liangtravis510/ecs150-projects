@@ -15,18 +15,22 @@
 
 using namespace std;
 
-DistributedFileSystemService::DistributedFileSystemService(string diskFile) : HttpService("/ds3/") {
+DistributedFileSystemService::DistributedFileSystemService(string diskFile) : HttpService("/ds3/")
+{
   this->fileSystem = new LocalFileSystem(new Disk(diskFile, UFS_BLOCK_SIZE));
-}  
+}
 
-void DistributedFileSystemService::get(HTTPRequest *request, HTTPResponse *response) {
+void DistributedFileSystemService::get(HTTPRequest *request, HTTPResponse *response)
+{
   response->setBody("");
 }
 
-void DistributedFileSystemService::put(HTTPRequest *request, HTTPResponse *response) {
+void DistributedFileSystemService::put(HTTPRequest *request, HTTPResponse *response)
+{
   response->setBody("");
 }
 
-void DistributedFileSystemService::del(HTTPRequest *request, HTTPResponse *response) {
+void DistributedFileSystemService::del(HTTPRequest *request, HTTPResponse *response)
+{
   response->setBody("");
 }
