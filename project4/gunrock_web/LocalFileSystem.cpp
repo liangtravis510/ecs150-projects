@@ -332,6 +332,7 @@ int LocalFileSystem::create(int parentInodeNumber, int type, std::string name)
   newInode.type = type;
   newInode.size = (type == UFS_DIRECTORY) ? 2 * sizeof(dir_ent_t) : 0;
 
+  // If creating a directory, initialize `.` and `..`
   if (type == UFS_DIRECTORY)
   {
     unsigned char dataBitmap[super.data_bitmap_len * UFS_BLOCK_SIZE];
@@ -359,19 +360,25 @@ int LocalFileSystem::create(int parentInodeNumber, int type, std::string name)
 
     writeDataBitmap(&super, dataBitmap);
 
+    // Initialize directory entries
     dir_ent_t entries[2];
     strncpy(entries[0].name, ".", DIR_ENT_NAME_SIZE - 1);
     entries[0].name[DIR_ENT_NAME_SIZE - 1] = '\0'; // Null-terminate
-    entries[0].inum = newInodeNumber;
+    entries[0].inum = newInodeNumber;              // "." points to itself
 
     strncpy(entries[1].name, "..", DIR_ENT_NAME_SIZE - 1);
     entries[1].name[DIR_ENT_NAME_SIZE - 1] = '\0'; // Null-terminate
-    entries[1].inum = parentInodeNumber;
+    entries[1].inum = parentInodeNumber;           // ".." points to the parent directory
 
-    this->write(super.data_region_addr + freeBlock, entries, sizeof(entries));
+    // Write entries to the new directory block
+    char newDirBlock[UFS_BLOCK_SIZE] = {0};
+    memcpy(newDirBlock, entries, sizeof(entries));
+    disk->writeBlock(super.data_region_addr + freeBlock, newDirBlock);
+
     newInode.direct[0] = super.data_region_addr + freeBlock;
   }
 
+  // Update inode region with the new inode
   inode_t inodes[super.inode_region_len * UFS_BLOCK_SIZE / sizeof(inode_t)];
   readInodeRegion(&super, inodes);
   inodes[newInodeNumber] = newInode;
@@ -383,28 +390,11 @@ int LocalFileSystem::create(int parentInodeNumber, int type, std::string name)
   newEntry.name[DIR_ENT_NAME_SIZE - 1] = '\0'; // Null-terminate
   newEntry.inum = newInodeNumber;
 
-  // Read parent directory block for debugging
   char parentDirBlock[UFS_BLOCK_SIZE];
   disk->readBlock(parentInode.direct[0], parentDirBlock);
-  printf("DEBUG: Parent directory block content before write:\n");
-  for (int i = 0; i < UFS_BLOCK_SIZE; i += sizeof(dir_ent_t))
-  {
-    dir_ent_t *entry = reinterpret_cast<dir_ent_t *>(parentDirBlock + i);
-    printf("DEBUG: Entry %ld - inum: %d, name: '%s'\n", (long)(i / sizeof(dir_ent_t)), entry->inum, entry->name);
-  }
 
-  // Append the new entry
   memcpy(parentDirBlock + parentInode.size, &newEntry, sizeof(newEntry));
   disk->writeBlock(parentInode.direct[0], parentDirBlock);
-
-  // Debug output after writing the new entry
-  disk->readBlock(parentInode.direct[0], parentDirBlock);
-  printf("DEBUG: Parent directory block content after write:\n");
-  for (int i = 0; i < UFS_BLOCK_SIZE; i += sizeof(dir_ent_t))
-  {
-    dir_ent_t *entry = reinterpret_cast<dir_ent_t *>(parentDirBlock + i);
-    printf("DEBUG: Entry %ld - inum: %d, name: '%s'\n", (long)(i / sizeof(dir_ent_t)), entry->inum, entry->name);
-  }
 
   // Update the parent directory inode
   parentInode.size += sizeof(dir_ent_t); // Increase size for the new entry
