@@ -1,6 +1,6 @@
 #include <iostream>
-#include <string>
 #include <memory>
+#include <string>
 
 #include <fcntl.h>
 #include <stdlib.h>
@@ -8,9 +8,9 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
-#include "LocalFileSystem.h"
-#include "Disk.h"
-#include "ufs.h"
+#include "include/Disk.h"
+#include "include/LocalFileSystem.h"
+#include "include/ufs.h"
 
 using namespace std;
 
@@ -20,60 +20,52 @@ int main(int argc, char *argv[])
   {
     cerr << argv[0] << ": diskImageFile src_file dst_inode" << endl;
     cerr << "For example:" << endl;
-    cerr << "    $ " << argv[0] << " tests/disk_images/a.img dthread.cpp 3" << endl;
+    cerr << "    $ " << argv[0] << " tests/disk_images/a.img dthread.cpp 3"
+         << endl;
     return 1;
   }
 
   // Parse command line arguments
-  /*
-  Disk *disk = new Disk(argv[1], UFS_BLOCK_SIZE);
-  LocalFileSystem *fileSystem = new LocalFileSystem(disk);
-  string srcFile = string(argv[2]);
-  int dstInode = stoi(argv[3]);
-  */
   unique_ptr<Disk> disk = make_unique<Disk>(argv[1], UFS_BLOCK_SIZE);
-  unique_ptr<LocalFileSystem> fileSystem = make_unique<LocalFileSystem>(disk.get());
+  unique_ptr<LocalFileSystem> fileSystem =
+      make_unique<LocalFileSystem>(disk.get());
   string srcFile = string(argv[2]);
   int dstInode = stoi(argv[3]);
 
-  // Open the source file
-  int srcFd = open(srcFile.c_str(), O_RDONLY);
-  if (srcFd < 0)
+  // Open local file
+  int local_fp = open(srcFile.c_str(), O_RDONLY);
+  if (local_fp < 0)
   {
-    cerr << "Failed to open source file: " << srcFile << endl;
+    cerr << "Failed to open file" << endl;
     return 1;
   }
 
-  // Read and write the file in chunks
-  char buffer[UFS_BLOCK_SIZE];
-  int bytesRead = 0;
-  int totalBytesWritten = 0;
-
-  disk->beginTransaction(); // Start transaction
-  while ((bytesRead = read(srcFd, buffer, UFS_BLOCK_SIZE)) > 0)
+  // Read local file into write buffer
+  char r_buf[UFS_BLOCK_SIZE];
+  string w_buf;
+  int bytes_read = 0;
+  while ((bytes_read = read(local_fp, r_buf, sizeof(r_buf))) > 0)
   {
-    int result = fileSystem->write(dstInode, buffer, bytesRead);
-    if (result < 0)
-    {
-      disk->rollback(); // Rollback if an error occurs
-      cerr << "Write error for inode " << dstInode << ": " << result << endl;
-      close(srcFd);
-      return 1;
-    }
-    totalBytesWritten += bytesRead;
+    w_buf.append(r_buf, bytes_read);
   }
 
-  if (bytesRead < 0)
+  close(local_fp);
+
+  if (bytes_read < 0)
+  {
+    cerr << "Read error" << endl;
+    return 1;
+  }
+
+  // Write write buffer to destination inode
+  disk->beginTransaction();
+  if (fileSystem->write(dstInode, w_buf.c_str(), w_buf.length()) < 0)
   {
     disk->rollback();
-    cerr << "Read error for source file: " << srcFile << endl;
-    close(srcFd);
+    cerr << "Could not write to dst_file" << endl;
     return 1;
   }
+  disk->commit();
 
-  disk->commit(); // Commit transaction
-  close(srcFd);
-
-  // cout << "Copied " << totalBytesWritten << " bytes from " << srcFile << " to inode " << dstInode << endl;
   return 0;
 }
