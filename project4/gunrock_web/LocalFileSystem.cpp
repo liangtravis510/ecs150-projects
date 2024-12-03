@@ -357,134 +357,104 @@ int LocalFileSystem::create(int parentInodeNumber, int type, std::string name)
 
 int LocalFileSystem::write(int inodeNumber, const void *buffer, int size)
 {
-  // Read the superblock
+  if (size < 0)
+  {
+    return -EINVALIDSIZE;
+  }
+
   super_t super;
-  readSuperBlock(&super);
+  char superBlockBuffer[UFS_BLOCK_SIZE];
+  disk->readBlock(0, superBlockBuffer);
+  memcpy(&super, superBlockBuffer, sizeof(super_t));
 
-  // Validate the inode
+  if (inodeNumber < 0 || inodeNumber >= super.num_inodes)
+  {
+    return -EINVALIDINODE;
+  }
+
+  int inodesPerBlock = UFS_BLOCK_SIZE / sizeof(inode_t);
+  int inodeBlock = super.inode_region_addr + (inodeNumber / inodesPerBlock);
+  int inodeOffset = (inodeNumber % inodesPerBlock) * sizeof(inode_t);
+  char inodeBlockBuffer[UFS_BLOCK_SIZE];
+  disk->readBlock(inodeBlock, inodeBlockBuffer);
   inode_t inode;
-  int statResult = this->stat(inodeNumber, &inode);
-  if (statResult != 0)
+  memcpy(&inode, inodeBlockBuffer + inodeOffset, sizeof(inode_t));
+
+  if (inode.type != UFS_REGULAR_FILE)
   {
-    return statResult;
+    return -EWRITETODIR;
   }
 
-  // Validate the inode type
-  if (inode.type != UFS_REGULAR_FILE && inode.type != UFS_DIRECTORY)
+  int requiredBlocks = (size + UFS_BLOCK_SIZE - 1) / UFS_BLOCK_SIZE;
+
+  // Reset invalid block pointers
+  for (int i = 0; i < DIRECT_PTRS; i++)
   {
-    return -EWRITETODIR; // Cannot write to a non-file or non-directory inode
-  }
-
-  // Validate the write size
-  if (size < 0 || (inode.size + size) > MAX_FILE_SIZE)
-  {
-    return -EINVALIDSIZE; // Invalid size for write
-  }
-
-  // Calculate the total number of blocks needed after the write
-  int currentBlocks = (inode.size + UFS_BLOCK_SIZE - 1) / UFS_BLOCK_SIZE;      // Current allocated blocks
-  int totalBlocks = (inode.size + size + UFS_BLOCK_SIZE - 1) / UFS_BLOCK_SIZE; // Blocks needed after write
-
-  if (totalBlocks > DIRECT_PTRS)
-  {
-    return -EINVALIDSIZE; // File too large for direct pointers
-  }
-
-  // Allocate additional blocks if needed
-  unsigned char dataBitmap[super.data_bitmap_len * UFS_BLOCK_SIZE];
-  readDataBitmap(&super, dataBitmap);
-
-  // Allocate additional blocks if needed
-  for (int i = currentBlocks; i < totalBlocks; ++i)
-  {
-    if (inode.direct[i] == 0 || inode.direct[i] == static_cast<unsigned int>(-1))
+    if (inode.direct[i] <= 0 ||
+        static_cast<unsigned int>(inode.direct[i]) >= static_cast<unsigned int>(super.data_region_addr + super.num_data))
     {
-      int freeBlock = -1;
-      for (int j = 0; j < super.num_data; ++j)
-      {
-        int byte_offset = j % 8;
-        int bitmap_byte = j / 8;
-        char bitmask = 0b1 << byte_offset;
+      inode.direct[i] = 0;
+    }
+  }
 
-        if (!(dataBitmap[bitmap_byte] & bitmask))
+  char dataBitmapBuffer[UFS_BLOCK_SIZE];
+  disk->readBlock(super.data_bitmap_addr, dataBitmapBuffer);
+
+  // Allocate blocks
+  for (int i = 0; i < requiredBlocks; i++)
+  {
+    if (inode.direct[i] == 0)
+    {
+      bool blockAllocated = false;
+      for (int j = 0; j < super.num_data; j++)
+      {
+        int byteIndex = j / 8;
+        int bitIndex = j % 8;
+
+        if (!(dataBitmapBuffer[byteIndex] & (1 << bitIndex)))
         {
-          freeBlock = j;
-          dataBitmap[bitmap_byte] |= bitmask; // Mark block as allocated
-          // cerr << "Allocated block " << (super.data_region_addr + freeBlock)
-          //      << " for inode " << inodeNumber << " at direct index " << i << endl;
+          dataBitmapBuffer[byteIndex] |= (1 << bitIndex);
+          inode.direct[i] = super.data_region_addr + j;
+          blockAllocated = true;
           break;
         }
       }
 
-      if (freeBlock == -1)
+      if (!blockAllocated)
       {
-        // cerr << "Error: No free blocks available for inode " << inodeNumber << endl;
-        return -ENOTENOUGHSPACE; // No free blocks available
+        return -ENOTENOUGHSPACE;
       }
-
-      inode.direct[i] = static_cast<unsigned int>(super.data_region_addr + freeBlock);
     }
-    // else
-    // {
-    //   cerr << "Block " << inode.direct[i] << " already allocated for inode " << inodeNumber
-    //        << " at direct index " << i << endl;
-    // }
   }
 
-  // Write updated data bitmap back to disk
-  writeDataBitmap(&super, dataBitmap);
+  disk->writeBlock(super.data_bitmap_addr, dataBitmapBuffer);
 
-  // Write the buffer to blocks
-  const char *writeBuffer = reinterpret_cast<const char *>(buffer);
-  int offset = inode.size; // Start writing at the end of current data
-  for (int i = 0; i < totalBlocks; ++i)
+  // Write data to blocks
+  int bytesWritten = 0;
+  for (int i = 0; i < requiredBlocks; i++)
   {
-    unsigned int blockNumber = inode.direct[i];
-    unsigned int dataRegionStart = super.data_region_addr;
-    unsigned int dataRegionEnd = super.data_region_addr + super.num_data;
-
-    if (blockNumber < dataRegionStart || blockNumber >= dataRegionEnd)
+    if (inode.direct[i] <= 0 ||
+        static_cast<unsigned int>(inode.direct[i]) >= static_cast<unsigned int>(super.data_region_addr + super.num_data))
     {
-      // cerr << "Error: Invalid block number " << blockNumber
-      //      << " for inode " << inodeNumber << " at direct index " << i << endl;
-      return -EINVAL;
+      return -EINVALIDINODE;
     }
 
-    char blockBuffer[UFS_BLOCK_SIZE] = {0}; // Zero-initialized buffer
+    int blockNum = inode.direct[i];
+    int offset = bytesWritten;
+    int chunkSize = std::min(UFS_BLOCK_SIZE, size - bytesWritten);
 
-    // Read the current block to preserve existing data if partially written
-    if (offset % UFS_BLOCK_SIZE != 0 || size < UFS_BLOCK_SIZE)
-    {
-      // cerr << "Read block " << blockNumber << " for partial overwrite." << endl;
-      disk->readBlock(blockNumber, blockBuffer);
-    }
+    char blockBuffer[UFS_BLOCK_SIZE] = {0};
+    memcpy(blockBuffer, static_cast<const char *>(buffer) + offset, chunkSize);
+    disk->writeBlock(blockNum, blockBuffer);
 
-    int blockOffset = offset % UFS_BLOCK_SIZE;
-    int bytesToWrite = std::min(UFS_BLOCK_SIZE - blockOffset, size);
-
-    // Copy data into the block buffer
-    std::memcpy(blockBuffer + blockOffset, writeBuffer, bytesToWrite);
-
-    // Write the updated block back to disk
-    disk->writeBlock(blockNumber, blockBuffer);
-    // cerr << "Wrote " << bytesToWrite << " bytes to block " << blockNumber << endl;
-
-    // Update offsets and remaining size
-    writeBuffer += bytesToWrite;
-    offset += bytesToWrite;
-    size -= bytesToWrite;
+    bytesWritten += chunkSize;
   }
 
-  // Update the inode metadata
-  // cerr << "Updating inode metadata: previous size=" << inode.size << ", new size=" << offset << endl;
-  inode.size = offset; // Update the size to reflect the new data
-  inode_t inodes[super.inode_region_len * UFS_BLOCK_SIZE / sizeof(inode_t)];
-  readInodeRegion(&super, inodes);
-  inodes[inodeNumber] = inode;
-  writeInodeRegion(&super, inodes);
+  inode.size = size;
+  memcpy(inodeBlockBuffer + inodeOffset, &inode, sizeof(inode_t));
+  disk->writeBlock(inodeBlock, inodeBlockBuffer);
 
-  // cerr << "Write operation complete: inodeNumber=" << inodeNumber << ", total bytes written=" << offset << endl;
-  return offset; // Return the number of bytes written
+  return bytesWritten;
 }
 
 int LocalFileSystem::unlink(int parentInodeNumber, string name)
