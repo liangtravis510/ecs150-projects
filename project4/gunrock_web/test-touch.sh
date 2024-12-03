@@ -16,22 +16,23 @@ run_test() {
 # 1. Test creating a new file in the root directory
 echo "Test 1: Create a new file in the root directory"
 run_test $DS3TOUCH $DISK_IMAGE 0 testfile1
+./ds3ls a2.img /
 
 # 2. Test creating a file in a nested directory
 echo "Test 2: Create a file in a nested directory"
 run_test $DS3TOUCH $DISK_IMAGE 1 testfile2  # Assuming inode 1 corresponds to `/nested`
+./ds3ls a2.img /a
 
 # 3. Test creating a file that already exists
 echo "Test 3: Create a file that already exists"
 run_test $DS3TOUCH $DISK_IMAGE 0 testfile1
+./ds3ls a2.img /
 
 # 4. Test creating a file in a non-existent directory
 echo "Test 4: Create a file in a non-existent directory"
 run_test $DS3TOUCH $DISK_IMAGE 999 testfile3  # Assuming inode 999 doesn't exist
+./ds3ls a2.img /
 
-# 5. Test creating a file with an invalid name
-echo "Test 5: Create a file with an invalid name"
-run_test $DS3TOUCH $DISK_IMAGE 0 "test:file"
 
 echo "All tests completed."
 

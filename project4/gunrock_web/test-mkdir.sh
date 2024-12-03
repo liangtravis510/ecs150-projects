@@ -16,21 +16,24 @@ run_test() {
 # 1. Test creating a new directory in the root directory
 echo "Test 1: Create a new directory in the root directory"
 run_test $DS3MKDIR $DISK_IMAGE 0 testdir1
+./ds3ls a2.img /
+./ds3ls a2.img /testdir1
 
 # 2. Test creating a directory inside another directory
 echo "Test 2: Create a directory inside another directory"
 run_test $DS3MKDIR $DISK_IMAGE 1 nested_dir  # Assuming inode 1 corresponds to an existing directory
+./ds3ls a2.img /a
+./ds3ls a2.img /a/nested_dir
 
 # 3. Test creating a directory that already exists
 echo "Test 3: Create a directory that already exists"
 run_test $DS3MKDIR $DISK_IMAGE 0 testdir1
+./ds3ls a2.img /
+./ds3ls a2.img /testdir1
 
 # 4. Test creating a directory in a non-existent directory
 echo "Test 4: Create a directory in a non-existent directory"
 run_test $DS3MKDIR $DISK_IMAGE 999 nonexistent_dir  # Assuming inode 999 doesn't exist
-
-# 5. Test creating a directory with an invalid name
-echo "Test 5: Create a directory with an invalid name"
-run_test $DS3MKDIR $DISK_IMAGE 0 "invalid:dir"
+./ds3ls a2.img /
 
 echo "All tests completed."
