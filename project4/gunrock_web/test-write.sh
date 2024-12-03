@@ -1,43 +1,37 @@
 #!/bin/bash
-
-# Print BEFORE message
-echo "START\n"
-
 cp tests/disk_images/a.img a2.img
 
-# Initial state
-./ds3cat ./a2.img 3
-echo "\n"
-./ds3bits ./a2.img 
 
-# Write a file to the disk
-echo "AFTER LONG WRITE\n"
-./ds3mkdir ./a2.img 1
-echo "\n"
-./ds3cat ./a2.img 3
-echo "\n"
-./ds3bits ./a2.img 
+# Test script for ds3touch
+DISK_IMAGE="a2.img"  # Update with the path to your disk image
+DS3TOUCH="./ds3touch"  # Update with the path to your ds3touch binary
 
-# Write another file to the disk
-echo "AFTER SHORT WRITE\n"
-./ds3mkdir ./a2.img 0
-echo "\n"
-./ds3cat ./a2.img 3
-echo "\n"
-./ds3bits ./a2.img
+# Utility function to run a command and print its result
+run_test() {
+    echo "Running: $@"
+    $@ && echo "Test passed." || echo "Test failed."
+    echo "------------------------------------"
+}
 
-# Delete the first file
-echo "AFTER DELETING LONG WRITE\n"
-./ds3rm ./a2.img 1
-echo "\n"
-./ds3cat ./a2.img 3
-echo "\n"
-./ds3bits ./a2.img
+# 1. Test creating a new file in the root directory
+echo "Test 1: Create a new file in the root directory"
+run_test $DS3TOUCH $DISK_IMAGE /testfile1
 
-# Delete the second file
-echo "AFTER DELETING SHORT WRITE\n"
-./ds3rm ./a2.img 0
-echo "\n"
-./ds3cat ./a2.img 3
-echo "\n"
-./ds3bits ./a2.img
+# 2. Test creating a file in a nested directory
+echo "Test 2: Create a file in a nested directory"
+run_test $DS3TOUCH $DISK_IMAGE /nested/testfile2
+
+# 3. Test creating a file that already exists
+echo "Test 3: Create a file that already exists"
+run_test $DS3TOUCH $DISK_IMAGE /testfile1
+
+# 4. Test creating a file in a non-existent directory
+echo "Test 4: Create a file in a non-existent directory"
+run_test $DS3TOUCH $DISK_IMAGE /nonexistent/testfile3
+
+# 5. Test creating a file with an invalid name
+echo "Test 5: Create a file with an invalid name"
+run_test $DS3TOUCH $DISK_IMAGE "/invalid/name/test:file"
+
+
+echo "All tests completed."
