@@ -27,8 +27,7 @@ int main(int argc, char *argv[])
 
   // Parse command line arguments
   unique_ptr<Disk> disk = make_unique<Disk>(argv[1], UFS_BLOCK_SIZE);
-  unique_ptr<LocalFileSystem> fileSystem =
-      make_unique<LocalFileSystem>(disk.get());
+  unique_ptr<LocalFileSystem> fileSystem = make_unique<LocalFileSystem>(disk.get());
   string srcFile = string(argv[2]);
   int dstInode = stoi(argv[3]);
 
@@ -41,17 +40,17 @@ int main(int argc, char *argv[])
   }
 
   // Read local file into write buffer
-  char r_buf[UFS_BLOCK_SIZE];
-  string w_buf;
-  int bytes_read = 0;
-  while ((bytes_read = read(local_fp, r_buf, sizeof(r_buf))) > 0)
+  char readBuffer[UFS_BLOCK_SIZE];
+  string writeBuffer;
+  int bytesRead = 0;
+  while ((bytesRead = read(local_fp, readBuffer, sizeof(readBuffer))) > 0)
   {
-    w_buf.append(r_buf, bytes_read);
+    writeBuffer.append(readBuffer, bytesRead);
   }
 
   close(local_fp);
 
-  if (bytes_read < 0)
+  if (bytesRead < 0)
   {
     cerr << "Read error" << endl;
     return 1;
@@ -59,7 +58,7 @@ int main(int argc, char *argv[])
 
   // Write write buffer to destination inode
   disk->beginTransaction();
-  if (fileSystem->write(dstInode, w_buf.c_str(), w_buf.length()) < 0)
+  if (fileSystem->write(dstInode, writeBuffer.c_str(), writeBuffer.length()) < 0)
   {
     disk->rollback();
     cerr << "Could not write to dst_file" << endl;

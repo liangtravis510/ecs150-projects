@@ -27,8 +27,8 @@ int listDirectory(LocalFileSystem *fileSystem, const string &directory)
   }
 
   // Find inode of directory
-  int inode_num = UFS_ROOT_DIRECTORY_INODE_NUMBER;
-  int parent_inode_num = inode_num;
+  int inodeNum = UFS_ROOT_DIRECTORY_INODE_NUMBER;
+  int parentInodeNum = inodeNum;
   if (directory.size() != 1)
   {
     string segment;
@@ -36,9 +36,9 @@ int listDirectory(LocalFileSystem *fileSystem, const string &directory)
     {
       if (*iter == '/')
       {
-        parent_inode_num = inode_num;
-        inode_num = fileSystem->lookup(inode_num, segment);
-        if (inode_num < 0)
+        parentInodeNum = inodeNum;
+        inodeNum = fileSystem->lookup(inodeNum, segment);
+        if (inodeNum < 0)
         {
           cerr << "Directory not found" << endl;
           return 1;
@@ -51,9 +51,9 @@ int listDirectory(LocalFileSystem *fileSystem, const string &directory)
       }
     }
     // One more time for last path segment
-    parent_inode_num = inode_num;
-    inode_num = fileSystem->lookup(inode_num, segment);
-    if (inode_num < 0)
+    parentInodeNum = inodeNum;
+    inodeNum = fileSystem->lookup(inodeNum, segment);
+    if (inodeNum < 0)
     {
       cerr << "Directory not found" << endl;
       return 1;
@@ -62,7 +62,7 @@ int listDirectory(LocalFileSystem *fileSystem, const string &directory)
 
   // Create inode struct
   inode_t inode;
-  if (fileSystem->stat(inode_num, &inode))
+  if (fileSystem->stat(inodeNum, &inode))
   {
     cerr << "Directory not found" << endl;
     return 1;
@@ -73,7 +73,7 @@ int listDirectory(LocalFileSystem *fileSystem, const string &directory)
   {
     // Create parent inode
     inode_t parent_inode;
-    if (fileSystem->stat(parent_inode_num, &parent_inode))
+    if (fileSystem->stat(parentInodeNum, &parent_inode))
     {
       cerr << "Directory not found" << endl;
       return 1;
@@ -81,7 +81,7 @@ int listDirectory(LocalFileSystem *fileSystem, const string &directory)
     // Get parent inode directory entries
     int num_entries = parent_inode.size / sizeof(dir_ent_t);
     vector<dir_ent_t> buffer(num_entries);
-    int bytes_read = fileSystem->read(parent_inode_num, buffer.data(), parent_inode.size);
+    int bytes_read = fileSystem->read(parentInodeNum, buffer.data(), parent_inode.size);
     if (bytes_read != parent_inode.size)
     {
       cerr << "Directory not found" << endl;
@@ -90,9 +90,9 @@ int listDirectory(LocalFileSystem *fileSystem, const string &directory)
     // Search for inode entry to get filename
     for (const auto &entry : buffer)
     {
-      if (entry.inum == inode_num)
+      if (entry.inum == inodeNum)
       {
-        cout << inode_num << '\t' << entry.name << endl;
+        cout << inodeNum << '\t' << entry.name << endl;
         return 0;
       }
     }
@@ -102,7 +102,7 @@ int listDirectory(LocalFileSystem *fileSystem, const string &directory)
     // Get directory entries
     int num_entries = inode.size / sizeof(dir_ent_t);
     vector<dir_ent_t> buffer(num_entries);
-    int bytes_read = fileSystem->read(inode_num, buffer.data(), inode.size);
+    int bytes_read = fileSystem->read(inodeNum, buffer.data(), inode.size);
     if (bytes_read != inode.size)
     {
       cerr << "Directory not found" << endl;

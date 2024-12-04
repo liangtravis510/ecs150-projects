@@ -38,27 +38,27 @@ int main(int argc, char *argv[])
     return 1;
   }
 
-  int num_blocks = inode.size / UFS_BLOCK_SIZE;
+  int numBlocks = inode.size / UFS_BLOCK_SIZE;
   if (inode.size % UFS_BLOCK_SIZE)
   {
-    num_blocks += 1;
+    numBlocks += 1;
   }
 
   // Print disk block numbers
   cout << "File blocks" << endl;
-  for (int idx = 0; idx < num_blocks; idx++)
+  for (int idx = 0; idx < numBlocks; idx++)
     cout << inode.direct[idx] << endl;
   cout << endl;
 
   // Print file contents
   cout << "File data" << endl;
-  char file_contents[inode.size];
-  if (fileSystem->read(inodeNumber, file_contents, inode.size) != inode.size)
+  char fileContents[inode.size];
+  if (fileSystem->read(inodeNumber, fileContents, inode.size) != inode.size)
   {
     cerr << "Error reading file" << endl;
     return 1;
   }
-  cout.write(file_contents, inode.size);
+  cout.write(fileContents, inode.size);
 
   return 0;
 }

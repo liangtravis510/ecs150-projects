@@ -47,19 +47,19 @@ int main(int argc, char *argv[])
 
   // Print inode and data bitmaps
   cout << "Inode bitmap" << endl;
-  int num_bytes = super.num_inodes / 8;
+  int numBytes = super.num_inodes / 8;
   if (super.num_inodes % 8)
-    num_bytes++;
-  for (int idx = 0; idx < num_bytes; idx++)
+    numBytes++;
+  for (int idx = 0; idx < numBytes; idx++)
     cout << static_cast<unsigned int>(inode_bitmap[idx]) << ' ';
 
   cout << endl
        << endl
        << "Data bitmap" << endl;
-  num_bytes = super.num_data / 8;
+  numBytes = super.num_data / 8;
   if (super.num_data % 8 != 0)
-    num_bytes += 1;
-  for (int idx = 0; idx < num_bytes; idx++)
+    numBytes += 1;
+  for (int idx = 0; idx < numBytes; idx++)
     cout << static_cast<unsigned int>(data_bitmap[idx]) << ' ';
   cout << endl;
 
