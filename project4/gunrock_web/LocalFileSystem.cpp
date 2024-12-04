@@ -533,17 +533,17 @@ int LocalFileSystem::unlink(int parentInodeNumber, std::string name)
   int targetInodeNumber = this->lookup(parentInodeNumber, name);
   if (targetInodeNumber < 0)
   {
-    return 0; // If the name doesn't exist, it's not an error
+    return -ENOTFOUND; // Entry not found
   }
 
   inode_t targetInode;
   statResult = this->stat(targetInodeNumber, &targetInode);
   if (statResult != 0)
   {
-    return statResult; // Error reading target inode
+    return statResult; // Target inode is invalid
   }
 
-  // Handles directory-specific rules
+  // Handle directory-specific rules
   if (targetInode.type == UFS_DIRECTORY)
   {
     // Prevent unlinking "." or ".."
@@ -557,7 +557,7 @@ int LocalFileSystem::unlink(int parentInodeNumber, std::string name)
     int bytesRead = this->read(targetInodeNumber, buffer, targetInode.size);
     if (bytesRead < 0)
     {
-      return bytesRead;
+      return bytesRead; // Read error
     }
 
     // Check if directory has more than "." and ".."
@@ -569,21 +569,16 @@ int LocalFileSystem::unlink(int parentInodeNumber, std::string name)
   }
 
   // Remove the directory entry from the parent directory
-  char parentBuffer[parentInode.size];
-  int parentBytesRead = this->read(parentInodeNumber, parentBuffer, parentInode.size);
-  if (parentBytesRead < 0)
-  {
-    return parentBytesRead;
-  }
+  char parentBuffer[UFS_BLOCK_SIZE];
+  disk->readBlock(parentInode.direct[0], parentBuffer);
+  dir_ent_t *entries = reinterpret_cast<dir_ent_t *>(parentBuffer);
 
-  dir_ent_t *parentEntries = reinterpret_cast<dir_ent_t *>(parentBuffer);
   bool entryFound = false;
-  for (int i = 0; i < static_cast<int>(parentBytesRead / sizeof(dir_ent_t)); ++i)
+  for (int i = 0; i < static_cast<int>(parentInode.size / sizeof(dir_ent_t)); ++i)
   {
-    if (parentEntries[i].inum == targetInodeNumber)
+    if (entries[i].inum == targetInodeNumber)
     {
-      // Mark the entry as deleted by setting inum to -1
-      parentEntries[i].inum = -1;
+      entries[i].inum = -1; // Mark entry as deleted
       entryFound = true;
       break;
     }
@@ -591,23 +586,22 @@ int LocalFileSystem::unlink(int parentInodeNumber, std::string name)
 
   if (!entryFound)
   {
-    return -EINVALIDNAME; // Entry not found in parent directory
+    return -ENOTFOUND; // Entry not found
   }
 
   // Write updated parent directory back to disk
-  this->write(parentInodeNumber, parentEntries, parentBytesRead);
+  disk->writeBlock(parentInode.direct[0], parentBuffer);
 
-  // Free the target inode and its data blocks
+  // Free the inode in the bitmap
   unsigned char inodeBitmap[super.inode_bitmap_len * UFS_BLOCK_SIZE];
   readInodeBitmap(&super, inodeBitmap);
 
-  int byte_offset = targetInodeNumber % 8;
-  int bitmap_byte = targetInodeNumber / 8;
-  char bitmask = ~(0b1 << byte_offset);
-
-  inodeBitmap[bitmap_byte] &= bitmask; // Mark inode as free
+  int inodeByteOffset = targetInodeNumber % 8;
+  int inodeBitmapByte = targetInodeNumber / 8;
+  inodeBitmap[inodeBitmapByte] &= ~(0b1 << inodeByteOffset); // Mark inode as free
   writeInodeBitmap(&super, inodeBitmap);
 
+  // Free data blocks in the bitmap
   if (targetInode.type == UFS_REGULAR_FILE)
   {
     unsigned char dataBitmap[super.data_bitmap_len * UFS_BLOCK_SIZE];
@@ -615,16 +609,13 @@ int LocalFileSystem::unlink(int parentInodeNumber, std::string name)
 
     for (int i = 0; i < DIRECT_PTRS; ++i)
     {
-      if (targetInode.direct[i] != 0 &&
-          targetInode.direct[i] >= static_cast<unsigned int>(super.data_region_addr) &&
-          targetInode.direct[i] < static_cast<unsigned int>(super.data_region_addr + super.num_data))
+      if (targetInode.direct[i] != 0)
       {
         int blockNumber = targetInode.direct[i] - super.data_region_addr;
-        byte_offset = blockNumber % 8;
-        bitmap_byte = blockNumber / 8;
-        bitmask = ~(0b1 << byte_offset);
-
-        dataBitmap[bitmap_byte] &= bitmask; // Mark block as free
+        int blockByteOffset = blockNumber % 8;
+        int blockBitmapByte = blockNumber / 8;
+        dataBitmap[blockBitmapByte] &= ~(0b1 << blockByteOffset); // Mark block as free
+        targetInode.direct[i] = 0;                                // Clear block pointer
       }
     }
 
