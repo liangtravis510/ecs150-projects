@@ -14,44 +14,6 @@ LocalFileSystem::LocalFileSystem(Disk *disk)
   this->disk = disk;
 }
 
-void __find_free_bit(const int &bitmap_size, const int &num_entries,
-                     unsigned char bitmap[], int &free_bit_number,
-                     int &num_shifts, int &bitmap_byte)
-{
-  int entries_parsed = 0;
-  for (int idx = 0; idx < bitmap_size; idx++)
-  {
-    if (bitmap[idx] != 0xff)
-    {
-      free_bit_number = idx * 8;
-      unsigned char tmp = bitmap[idx];
-      // Shift until tmp's LSB is 0, each shift is one occupied inode
-      while (tmp & 0x1)
-      {
-        tmp >>= 1;
-        num_shifts++;
-      }
-      // free_inode_number now points to the first free inode
-      // Check that it is a valid inode
-      if (free_bit_number + num_shifts >= num_entries)
-      {
-        // No valid inodes available
-        free_bit_number = -1;
-        return;
-      }
-      free_bit_number += num_shifts;
-      bitmap_byte = idx;
-      return;
-    }
-    // 8 entries per byte
-    entries_parsed += 8;
-    if (entries_parsed >= num_entries)
-    {
-      return;
-    }
-  }
-}
-
 void LocalFileSystem::readSuperBlock(super_t *super)
 {
   char buffer[UFS_BLOCK_SIZE];
@@ -123,19 +85,19 @@ int LocalFileSystem::lookup(int parentInodeNumber, std::string name)
     return statResult;
   }
 
-  //] Check if the parent inode is a directory
+  // Check if the parent inode is a directory
   if (parentInode.type != UFS_DIRECTORY)
   {
-    return -EINVALIDINODE; // Parent inode is not a directory
+    return -EINVALIDINODE;
   }
 
   // Validate directory size alignment
   if (parentInode.size % sizeof(dir_ent_t) != 0)
   {
-    return -EINVALIDINODE; // Directory size is corrupted
+    return -EINVALIDINODE;
   }
 
-  // Step 5: Read the contents of the directory
+  // Read the contents of the directory
   char buffer[parentInode.size];
   int readBytes = this->read(parentInodeNumber, buffer, parentInode.size);
   if (readBytes < 0)
@@ -150,7 +112,7 @@ int LocalFileSystem::lookup(int parentInodeNumber, std::string name)
     dir_ent_t *entry = reinterpret_cast<dir_ent_t *>(buffer + offset);
 
     // Validate the entry's inode number and name
-    if (entry->inum != -1 && name == std::string(entry->name))
+    if (entry->inum != -1 && name == string(entry->name))
     {
       return entry->inum; // Found the entry, return its inode number
     }
@@ -164,42 +126,43 @@ int LocalFileSystem::lookup(int parentInodeNumber, std::string name)
 
 int LocalFileSystem::stat(int inodeNumber, inode_t *inode)
 {
-  // Step 1: Read the superblock
+  // Read the superblock
   super_t super;
-  readSuperBlock(&super); // Use the helper function to read the superblock
+  readSuperBlock(&super);
 
-  // Step 2: Validate the inode number
+  // Validate the inode number
   if (inodeNumber < 0 || inodeNumber >= super.num_inodes)
   {
     return -EINVALIDINODE; // Invalid inode number
   }
 
-  // Step 3: Read the inode bitmap
+  // Read the inode bitmap
   unsigned char inode_bitmap[super.inode_bitmap_len * UFS_BLOCK_SIZE];
-  readInodeBitmap(&super, inode_bitmap); // Use helper to read inode bitmap
+  readInodeBitmap(&super, inode_bitmap);
 
   // Calculate the bit position for the inode in the bitmap
   int byte_offset = inodeNumber % 8; // Bit offset within the byte
   int bitmap_byte = inodeNumber / 8; // Byte index in the bitmap
   char bitmask = 0b1 << byte_offset;
 
-  // Check if the inode is allocated
+  // Check if the inode exits and is allocated
   if (!(inode_bitmap[bitmap_byte] & bitmask))
   {
-    return -ENOTALLOCATED; // Inode exists but is not allocated
+    return -ENOTALLOCATED;
   }
 
-  // Step 4: Read the inode region
+  // Read the inode region
   inode_t inodes[super.inode_region_len * UFS_BLOCK_SIZE / sizeof(inode_t)];
-  readInodeRegion(&super, inodes); // Use helper to read the inode region
+  readInodeRegion(&super, inodes);
 
-  // Step 5: Retrieve the inode metadata and populate the output parameter
+  // Return the inode data
   *inode = inodes[inodeNumber];
-  return 0; // Success
+  return 0;
 }
 
 int LocalFileSystem::read(int inodeNumber, void *buffer, int size)
 {
+  // Invalid size
   if (size < 0)
   {
     return -EINVALIDSIZE;
@@ -274,15 +237,16 @@ int LocalFileSystem::create(int parentInodeNumber, int type, std::string name)
     return statResult;
   }
 
+  // Check if parent is a directory
   if (parentInode.type != UFS_DIRECTORY)
   {
-    return -EINVALIDINODE; // Parent is not a directory
+    return -EINVALIDINODE;
   }
 
   // Check if name is valid
   if (name.length() >= DIR_ENT_NAME_SIZE)
   {
-    return -EINVALIDNAME; // Name is too long
+    return -EINVALIDNAME;
   }
 
   // Check if name already exists
@@ -496,7 +460,7 @@ int LocalFileSystem::write(int inodeNumber, const void *buffer, int size)
   for (int i = 0; i < required_blocks; ++i)
   {
     char block_data[UFS_BLOCK_SIZE] = {0};
-    int bytes_to_write = std::min(size - bytes_written, UFS_BLOCK_SIZE);
+    int bytes_to_write = min(size - bytes_written, UFS_BLOCK_SIZE);
     memcpy(block_data, data_ptr, bytes_to_write);
     disk->writeBlock(inode.direct[i], block_data);
     data_ptr += bytes_to_write;
@@ -512,74 +476,52 @@ int LocalFileSystem::write(int inodeNumber, const void *buffer, int size)
 
 int LocalFileSystem::unlink(int parentInodeNumber, std::string name)
 {
-  // Read the superblock
+  // Read super block
   super_t super;
   readSuperBlock(&super);
 
-  // Validate the parent inode
-  inode_t parentInode;
-  int statResult = this->stat(parentInodeNumber, &parentInode);
-  if (statResult != 0)
+  // Validate parent inode
+  if (parentInodeNumber < 0 || static_cast<unsigned int>(parentInodeNumber) >= static_cast<unsigned int>(super.num_inodes))
   {
-    return statResult; // Parent inode is invalid
+    return -EINVALIDINODE;
   }
 
+  inode_t parentInode;
+  this->stat(parentInodeNumber, &parentInode);
+
+  // Check if the parent inode is a directory
   if (parentInode.type != UFS_DIRECTORY)
   {
-    return -EINVALIDINODE; // Parent is not a directory
+    return -EINVALIDTYPE;
   }
 
-  // Lookup the inode for the target name
-  int targetInodeNumber = this->lookup(parentInodeNumber, name);
-  if (targetInodeNumber < 0)
+  // Validate parentInode.direct[0]
+  if (static_cast<unsigned int>(parentInode.direct[0]) < static_cast<unsigned int>(super.data_region_addr) ||
+      static_cast<unsigned int>(parentInode.direct[0]) >= static_cast<unsigned int>(super.data_region_addr + super.num_data))
   {
-    return -ENOTFOUND; // Entry not found
+    return -EINVALIDINODE;
   }
 
-  inode_t targetInode;
-  statResult = this->stat(targetInodeNumber, &targetInode);
-  if (statResult != 0)
+  // Check for special cases: '.' and '..'
+  if (name == "." || name == "..")
   {
-    return statResult; // Target inode is invalid
+    return -EUNLINKNOTALLOWED;
   }
 
-  // Handle directory-specific rules
-  if (targetInode.type == UFS_DIRECTORY)
-  {
-    // Prevent unlinking "." or ".."
-    if (name == "." || name == "..")
-    {
-      return -EUNLINKNOTALLOWED;
-    }
+  // Read the directory block
+  char dirBlock[UFS_BLOCK_SIZE] = {0};
+  disk->readBlock(parentInode.direct[0], dirBlock);
 
-    // Ensure the directory is empty
-    char buffer[targetInode.size];
-    int bytesRead = this->read(targetInodeNumber, buffer, targetInode.size);
-    if (bytesRead < 0)
-    {
-      return bytesRead; // Read error
-    }
-
-    // Check if directory has more than "." and ".."
-    int numEntries = bytesRead / sizeof(dir_ent_t);
-    if (numEntries > 2)
-    {
-      return -EDIRNOTEMPTY; // Directory is not empty
-    }
-  }
-
-  // Remove the directory entry from the parent directory
-  char parentBuffer[UFS_BLOCK_SIZE];
-  disk->readBlock(parentInode.direct[0], parentBuffer);
-  dir_ent_t *entries = reinterpret_cast<dir_ent_t *>(parentBuffer);
-
+  // Find the entry to unlink
   bool entryFound = false;
-  for (int i = 0; i < static_cast<int>(parentInode.size / sizeof(dir_ent_t)); ++i)
+  int entryIndex = -1;
+  dir_ent_t *entries = reinterpret_cast<dir_ent_t *>(dirBlock);
+  for (unsigned int i = 0; i < static_cast<unsigned int>(parentInode.size / sizeof(dir_ent_t)); ++i)
   {
-    if (entries[i].inum == targetInodeNumber)
+    if (strncmp(entries[i].name, name.c_str(), DIR_ENT_NAME_SIZE) == 0)
     {
-      entries[i].inum = -1; // Mark entry as deleted
       entryFound = true;
+      entryIndex = static_cast<int>(i);
       break;
     }
   }
@@ -589,45 +531,73 @@ int LocalFileSystem::unlink(int parentInodeNumber, std::string name)
     return -ENOTFOUND; // Entry not found
   }
 
-  // Write updated parent directory back to disk
-  disk->writeBlock(parentInode.direct[0], parentBuffer);
+  // Check if the entry is a directory and not empty
+  inode_t targetInode;
+  this->stat(entries[entryIndex].inum, &targetInode);
+  if (targetInode.type == UFS_DIRECTORY &&
+      static_cast<unsigned int>(targetInode.size) > static_cast<unsigned int>(2 * sizeof(dir_ent_t)))
+  {
+    return -EDIRNOTEMPTY; // Cannot remove a non-empty directory
+  }
 
-  // Free the inode in the bitmap
+  // Mark the inode as free in the inode bitmap
   unsigned char inodeBitmap[super.inode_bitmap_len * UFS_BLOCK_SIZE];
   readInodeBitmap(&super, inodeBitmap);
 
-  int inodeByteOffset = targetInodeNumber % 8;
-  int inodeBitmapByte = targetInodeNumber / 8;
-  inodeBitmap[inodeBitmapByte] &= ~(0b1 << inodeByteOffset); // Mark inode as free
+  int inodeIndex = entries[entryIndex].inum;
+  int byteIndex = inodeIndex / 8;
+  int bitOffset = inodeIndex % 8;
+  inodeBitmap[byteIndex] &= ~(1 << bitOffset);
   writeInodeBitmap(&super, inodeBitmap);
 
-  // Free data blocks in the bitmap
-  if (targetInode.type == UFS_REGULAR_FILE)
+  // Clear data blocks if the entry is a file
+  if (targetInode.type != UFS_DIRECTORY)
   {
     unsigned char dataBitmap[super.data_bitmap_len * UFS_BLOCK_SIZE];
     readDataBitmap(&super, dataBitmap);
 
-    for (int i = 0; i < DIRECT_PTRS; ++i)
+    for (int i = 0; i < DIRECT_PTRS && targetInode.direct[i] != 0; ++i)
     {
-      if (targetInode.direct[i] != 0)
-      {
-        int blockNumber = targetInode.direct[i] - super.data_region_addr;
-        int blockByteOffset = blockNumber % 8;
-        int blockBitmapByte = blockNumber / 8;
-        dataBitmap[blockBitmapByte] &= ~(0b1 << blockByteOffset); // Mark block as free
-        targetInode.direct[i] = 0;                                // Clear block pointer
-      }
+      int dataIndex = targetInode.direct[i] - super.data_region_addr;
+      int byteIdx = dataIndex / 8;
+      int bitIdx = dataIndex % 8;
+      dataBitmap[byteIdx] &= ~(1 << bitIdx);
     }
-
     writeDataBitmap(&super, dataBitmap);
   }
 
-  // Update the parent inode size
-  parentInode.size -= sizeof(dir_ent_t);
+  // Clear data blocks if entry is a directory
+  if (targetInode.type == UFS_DIRECTORY)
+  {
+    unsigned char dataBitmap[super.data_bitmap_len * UFS_BLOCK_SIZE];
+    readDataBitmap(&super, dataBitmap);
+    for (int i = 0; i < DIRECT_PTRS && targetInode.direct[i] != 0; ++i)
+    {
+      int dataIndex = targetInode.direct[i] - super.data_region_addr;
+      int byteIndex = dataIndex / 8;
+      int bitOffset = dataIndex % 8;
+      dataBitmap[byteIndex] &= ~(1 << bitOffset);
+    }
+    writeDataBitmap(&super, dataBitmap);
+  }
+
+  // Remove the entry by shifting subsequent entries left
+  for (unsigned int i = static_cast<unsigned int>(entryIndex);
+       i < static_cast<unsigned int>(parentInode.size / sizeof(dir_ent_t)) - 1; ++i)
+  {
+    entries[i] = entries[i + 1];
+  }
+  parentInode.size -= static_cast<unsigned int>(sizeof(dir_ent_t));
+  memset(&entries[parentInode.size / sizeof(dir_ent_t)], 0, sizeof(dir_ent_t));
+
+  // Write updated directory block
+  disk->writeBlock(parentInode.direct[0], dirBlock);
+
+  // Update parent inode size
   inode_t inodes[super.inode_region_len * UFS_BLOCK_SIZE / sizeof(inode_t)];
   readInodeRegion(&super, inodes);
   inodes[parentInodeNumber] = parentInode;
   writeInodeRegion(&super, inodes);
 
-  return 0; // Success
+  return 0;
 }
