@@ -1,3 +1,4 @@
+
 #include <iostream>
 #include <string>
 #include <cstring>
@@ -319,6 +320,12 @@ int LocalFileSystem::create(int parentInodeNumber, int type, std::string name)
 
     if (freeBlock == -1)
     {
+      // No free blocks available, rollback inode allocation
+      int byte_offset = newInodeNumber % 8;
+      int bitmap_byte = newInodeNumber / 8;
+      inodeBitmap[bitmap_byte] &= ~(0b1 << byte_offset); // Free the inode
+      writeInodeBitmap(&super, inodeBitmap);
+
       return -ENOTENOUGHSPACE; // No free blocks available
     }
 
@@ -426,10 +433,10 @@ int LocalFileSystem::write(int inodeNumber, const void *buffer, int size)
     {
       int byte_idx = j / 8;
       int bit_idx = j % 8;
-      if (!(data_bitmap[byte_idx] & (0b1 << bit_idx)))
+      if (!(data_bitmap[byte_idx] & (1 << bit_idx)))
       {
         free_block = j;
-        data_bitmap[byte_idx] |= (0b1 << bit_idx);
+        data_bitmap[byte_idx] |= (1 << bit_idx);
         break;
       }
     }
@@ -492,7 +499,7 @@ int LocalFileSystem::unlink(int parentInodeNumber, std::string name)
   // Check if the parent inode is a directory
   if (parentInode.type != UFS_DIRECTORY)
   {
-    return -EINVALIDTYPE;
+    return -EINVALIDINODE;
   }
 
   // Validate parentInode.direct[0]
@@ -528,7 +535,7 @@ int LocalFileSystem::unlink(int parentInodeNumber, std::string name)
 
   if (!entryFound)
   {
-    return -ENOTFOUND; // Entry not found
+    return 0;
   }
 
   // Check if the entry is a directory and not empty
