@@ -20,8 +20,7 @@ int main(int argc, char *argv[])
   {
     cerr << argv[0] << ": diskImageFile src_file dst_inode" << endl;
     cerr << "For example:" << endl;
-    cerr << "    $ " << argv[0] << " tests/disk_images/a.img dthread.cpp 3"
-         << endl;
+    cerr << "    $ " << argv[0] << " tests/disk_images/a.img dthread.cpp 3" << endl;
     return 1;
   }
 
@@ -56,15 +55,27 @@ int main(int argc, char *argv[])
     return 1;
   }
 
-  // Write write buffer to destination inode
+  // Begin transaction for file system write
   disk->beginTransaction();
-  if (fileSystem->write(dstInode, writeBuffer.c_str(), writeBuffer.length()) < 0)
+
+  // Write write buffer to destination inode
+  int totalBytesToWrite = writeBuffer.length();
+  int bytesWritten = 0;
+  while (bytesWritten < totalBytesToWrite)
   {
-    disk->rollback();
-    cerr << "Could not write to dst_file" << endl;
-    return 1;
+    int writeResult = fileSystem->write(dstInode, writeBuffer.c_str() + bytesWritten, totalBytesToWrite - bytesWritten);
+    if (writeResult < 0)
+    {
+      disk->rollback();
+      cerr << "Could not write to dst_file" << endl;
+      return 1;
+    }
+    bytesWritten += writeResult;
   }
+
+  // Commit transaction if write is successful
   disk->commit();
 
+  // Ensure the return code is 0 for success
   return 0;
 }
